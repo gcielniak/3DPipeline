@@ -7,6 +7,8 @@
 #include <boost/make_shared.hpp>
 #include <boost/signals2/signal.hpp>
 #include <boost/bind.hpp>
+#include <boost/thread.hpp>
+#include <boost/thread/mutex.hpp>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/io/pcd_io.h>
@@ -35,7 +37,42 @@ template <typename PointT>
 class PCLoader : public Module<PointT> {
 	typename PointCloud<PointT>::Ptr cloud;
 
+	vector<string> file_names;
+	int file_counter;
+	bool running, quit;
+	boost::thread thread;
+
+	//return all file names matching the extension ext in a given directory dir
+	static void FileNamebyExt(boost::filesystem::path const& dir, string const& ext, vector<string>& file_names) {
+		boost::filesystem::directory_iterator pos(dir);
+		boost::filesystem::directory_iterator end;
+
+		for (; pos != end; ++pos) {
+			if (boost::filesystem::is_regular_file(pos->status())) {
+				if (boost::filesystem::extension(*pos) == ext) {
+#if BOOST_FILESYSTEM_VERSION == 3
+					file_names.push_back(pos->path().string());
+#else
+					file_names.push_back(pos->path());
+#endif
+				}
+			}
+		}
+	}
+
 public:
+
+	PCLoader(const string& dir_name) {
+		try {
+			FileNamebyExt(dir_name, ".pcd", file_names);
+		}
+		catch (boost::filesystem::filesystem_error&) {
+		}
+		file_counter = 0;
+		running = false;
+		quit = false;
+	}
+
 	void Load(const string& file_name) {
 		cloud = boost::make_shared< PointCloud<PointT> >();
 
@@ -50,6 +87,31 @@ public:
 			pc_signal(cloud);
 		}
 	}
+
+	void Start() {
+		running = true;
+		thread = boost::thread(&PCLoader<PointT>::threadFunction, this);
+	}
+
+	void Stop() {
+		quit = true;
+		running = false;
+	}
+
+	bool isRunning() const {
+		return running;
+	}
+
+	void threadFunction() {
+
+		while (!quit && (file_counter < file_names.size())) {
+			Load(file_names[file_counter]);
+			file_counter++;
+		}
+
+		running = false;
+	}
+
 };
 
 template <typename PointT>
@@ -57,6 +119,10 @@ class ZLogFilter : public Module<PointT> {
 
 public:
 	virtual void operator()(const typename PointCloud<PointT>::ConstPtr cloud) override {
+
+		for (size_t i = 0; i < cloud->points.size(); i++) {
+			cerr << cloud->points[i].x << " " << cloud->points[i].y << " " << cloud->points[i].z << endl;
+		}
 		pc_signal(cloud);
 	}
 };
@@ -82,7 +148,7 @@ public:
 			ground_distance = z_values[ground_index] - 0.25;
 		}
 
-		cerr << "Ground distance: " << ground_distance << endl;
+//		cerr << "Ground distance: " << ground_distance << endl;
 
 		PointCloud<PointT>::Ptr cloud_filtered(new pcl::PointCloud<PointT>);
 		// Create the filtering object
@@ -98,6 +164,8 @@ public:
 template <typename PointT>
 class PCViewer : public Module<PointT>{
 	visualization::PCLVisualizer::Ptr visualizer;
+	typename PointCloud<PointT>::ConstPtr cloud_;
+	boost::mutex cloud_mutex;
 
 public:
 	PCViewer() {
@@ -107,15 +175,27 @@ public:
 	}
 
 	virtual void operator()(const typename PointCloud<PointT>::ConstPtr cloud) override {
-		visualization::PointCloudColorHandlerRGBField<PointT> color_h(cloud);
-
-		if (!visualizer->updatePointCloud<PointT>(cloud, color_h))
-			visualizer->addPointCloud<PointT>(cloud, color_h);
+		boost::mutex::scoped_lock lock(cloud_mutex);
+		cloud_ = cloud;
+		lock.unlock();
 	}
 	
 	bool SpinOnce() {
 		if (!visualizer->wasStopped()) {
-			visualizer->spinOnce();
+			boost::shared_ptr<const PointCloud<PointT> > cloud;
+
+			if (cloud_mutex.try_lock()) {
+				cloud_.swap(cloud);
+				cloud_mutex.unlock();
+			}
+
+			if (cloud) {
+				visualization::PointCloudColorHandlerRGBField<PointT> color_h(cloud);
+				if (!visualizer->updatePointCloud<PointT>(cloud, color_h))
+					visualizer->addPointCloud<PointT>(cloud, color_h);
+
+				visualizer->spinOnce();
+			}
 			return true;
 		}
 
@@ -136,7 +216,7 @@ int main(int argc, char **argv) {
 
 	typedef PointXYZRGBA PointT;
 
-	PCLoader<PointT> loader;
+	PCLoader<PointT> loader(file_name);
 
 	//show point cloud
 	PCViewer<PointT> viewer, viewer2;
@@ -144,17 +224,16 @@ int main(int argc, char **argv) {
 	BoxFilter<PointT> filter;
 	ZLogFilter<PointT> zlog;
 
+	loader.Connect(filter);
 	loader.Connect(zlog);
 
 	loader.Connect(viewer);
 
-	zlog.Connect(filter);
-
 	filter.Connect(viewer2);
 
-	loader.Load(file_name);
+	loader.Start();
 
-	while (viewer.SpinOnce() && viewer2.SpinOnce())
+	while (viewer.SpinOnce() && viewer2.SpinOnce() && loader.isRunning())
 		;
 
 	return 0;
