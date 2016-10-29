@@ -15,6 +15,7 @@
 #include <pcl/visualization/pcl_visualizer.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/filter.h>
+#include <pcl/common/transforms.h>
 
 using namespace std;
 using namespace pcl;
@@ -62,16 +63,20 @@ class PCLoader : public Module<PointT> {
 
 public:
 
-	PCLoader(const string& dir_name) {
-		try {
-			FileNamebyExt(dir_name, ".pcd", file_names);
-		}
-		catch (boost::filesystem::filesystem_error&) {
-		}
-		file_counter = 0;
-		running = false;
-		quit = false;
-	}
+	PCLoader(const string& path_name) {
+        file_counter = 0;
+        running = false;
+        quit = false;
+
+        boost::filesystem::path path(path_name);
+        
+        if (!boost::filesystem::exists(path))
+            cerr << "No valid file name given!" << endl;
+        else if (boost::filesystem::is_directory(path))
+            FileNamebyExt(path_name, ".pcd", file_names);
+        else
+            file_names.push_back(path_name);
+ 	}
 
 	void Load(const string& file_name) {
 		cloud = boost::make_shared< PointCloud<PointT> >();
@@ -84,7 +89,15 @@ public:
 			//remove NAN points from the cloud
 			std::vector<int> indices;
 			pcl::removeNaNFromPointCloud(*cloud, *cloud, indices);
-			pc_signal(cloud);
+            
+            Eigen::Affine3f transform = Eigen::Affine3f::Identity();
+            
+            // The same rotation matrix as before; theta radians arround Z axis
+            transform.rotate (Eigen::AngleAxisf (0.15, Eigen::Vector3f::UnitX()));
+
+            pcl::transformPointCloud (*cloud, *cloud, transform);
+            
+			this->pc_signal(cloud);
 		}
 	}
 
@@ -118,12 +131,12 @@ template <typename PointT>
 class ZLogFilter : public Module<PointT> {
 
 public:
-	virtual void operator()(const typename PointCloud<PointT>::ConstPtr cloud) override {
+	virtual void operator()(const typename PointCloud<PointT>::ConstPtr cloud) {
 
 		for (size_t i = 0; i < cloud->points.size(); i++) {
 			cerr << cloud->points[i].x << " " << cloud->points[i].y << " " << cloud->points[i].z << endl;
 		}
-		pc_signal(cloud);
+        this->pc_signal(cloud);
 	}
 };
 
@@ -132,7 +145,7 @@ template <typename PointT>
 class BoxFilter : public Module<PointT> {
 
 public:
-	virtual void operator()(const typename PointCloud<PointT>::ConstPtr cloud) override {
+	virtual void operator()(const typename PointCloud<PointT>::ConstPtr cloud) {
 
 		//estimate distance to ground
 		std::vector<float> z_values(cloud->points.size());
@@ -150,14 +163,14 @@ public:
 
 //		cerr << "Ground distance: " << ground_distance << endl;
 
-		PointCloud<PointT>::Ptr cloud_filtered(new pcl::PointCloud<PointT>);
+		typename PointCloud<PointT>::Ptr cloud_filtered(new pcl::PointCloud<PointT>);
 		// Create the filtering object
 		pcl::PassThrough<PointT> pass;
 		pass.setInputCloud(cloud);
 		pass.setFilterFieldName("z");
 		pass.setFilterLimits(0.0, ground_distance);
 		pass.filter(*cloud_filtered);
-		pc_signal(cloud_filtered);
+		this->pc_signal(cloud_filtered);
 	}
 };
 
@@ -174,7 +187,7 @@ public:
 		visualizer->setCameraPosition(0.0, 0.0, -5.0, 0.0, -1.0, 0.0);
 	}
 
-	virtual void operator()(const typename PointCloud<PointT>::ConstPtr cloud) override {
+	virtual void operator()(const typename PointCloud<PointT>::ConstPtr cloud) {
 		boost::mutex::scoped_lock lock(cloud_mutex);
 		cloud_ = cloud;
 		lock.unlock();
@@ -225,7 +238,7 @@ int main(int argc, char **argv) {
 	ZLogFilter<PointT> zlog;
 
 	loader.Connect(filter);
-	loader.Connect(zlog);
+//	loader.Connect(zlog);
 
 	loader.Connect(viewer);
 
