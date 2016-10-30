@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.6 FATAL_ERROR)
 project(3DPipeline)
 
-set (EXTRA_INCLUDE_DIRS "")
+set (EXTRA_INCLUDE_DIRS include)
 set (EXTRA_LIBRARY_DIRS "")
 set (EXTRA_LIBRARIES "")
 
@@ -12,6 +12,8 @@ link_directories(${PCL_LIBRARY_DIRS} ${EXTRA_LIBRARY_DIRS})
 add_definitions(${PCL_DEFINITIONS})
 
 set (SOURCES
+	include/Module.h
+	include/Filters.h
 	src/3DPipelineApp.cpp)
 	
 add_executable(${CMAKE_PROJECT_NAME} ${SOURCES})
