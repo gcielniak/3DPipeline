@@ -176,21 +176,24 @@ int main(int argc, char **argv) {
 	PCLoader<PointT> loader(file_name);
 
 	//show point cloud
-	PCViewer<PointT> viewer, viewer2;
+	PCViewer<PointT> viewer;
 
 	BoxFilter<PointT> filter;
 	ZLogFilter<PointT> zlog;
+	PoseCorrection<PointT> pose_corrector;
 
-	loader.Connect(filter);
-	loader.Connect(zlog);
+//	loader.Connect(filter);
+//	loader.Connect(zlog);
+
+	loader.Connect(pose_corrector);
 
 	loader.Connect(viewer);
 
-	filter.Connect(viewer2);
+//	filter.Connect(viewer2);
 
 	loader.Start();
 
-	while (viewer.SpinOnce() && viewer2.SpinOnce() && loader.isRunning())
+	while (viewer.SpinOnce() && loader.isRunning())
 		;
 
 	return 0;

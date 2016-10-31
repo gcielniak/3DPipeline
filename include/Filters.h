@@ -1,6 +1,7 @@
 #pragma once
 #include "Module.h"
 #include <iostream>
+#include <pcl/registration/icp.h>
 
 using namespace std;
 using namespace pcl;
@@ -55,6 +56,24 @@ public:
 //Correct the camera pose so it is parallel to the ground
 template <typename PointT>
 class PoseCorrection : public Module<PointT> {
+	typename PointCloud<PointT>::Ptr cloud_prev;
+
+public:
+
+	virtual void operator()(const typename PointCloud<PointT>::Ptr cloud) {
+		if (cloud_prev != nullptr) {
+			IterativeClosestPoint<PointT, PointT> icp;
+			icp.setInputCloud(cloud);
+			icp.setInputTarget(cloud_prev);
+			PointCloud<PointT> cloud_reg;
+			icp.align(cloud_reg);
+//			std::cout << "has converged:" << icp.hasConverged() << " score: " << icp.getFitnessScore() << std::endl;
+			Eigen::Matrix4f transformation = icp.getFinalTransformation();	
+			std::cout << transformation(0, 3) << " " << transformation(1, 3) << " " << transformation(2, 3) << " " << std::endl;
+		}
+
+		cloud_prev = cloud;
+	}
 };
 
 //Estimate the ground surface and remove from the cloud
